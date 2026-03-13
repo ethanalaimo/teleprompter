@@ -2,7 +2,9 @@
 // + Teleprompter (notes input modal + wheel UI + speech-driven autoadvance)
 // NOTE: Teleprompter hides overlay visuals but keeps tracking running for LOOK UP cue.
 
-import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
+// FaceLandmarker and FilesetResolver are loaded via dynamic import in start()
+// so the module body runs immediately and we can show loading status to the user.
+let FaceLandmarker, FilesetResolver;
 
 const overlay  = document.getElementById("overlay");
 const octx     = overlay.getContext("2d");
@@ -2030,6 +2032,17 @@ function processSpokenText(transcript, isFinal){
   (async ()=>{
     try{
       setupTeleprompterUI();
+
+      // Load the mediapipe bundle dynamically so the page isn't silently
+      // frozen waiting on a large CDN file before any JS runs.
+      // Supports both named-export builds and default-export (UMD) builds.
+      statusEl.textContent = "Loading face detection model…";
+      const mp = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js");
+      FaceLandmarker   = mp.FaceLandmarker   ?? mp.default?.FaceLandmarker;
+      FilesetResolver  = mp.FilesetResolver  ?? mp.default?.FilesetResolver;
+      if(!FaceLandmarker || !FilesetResolver){
+        throw new Error("mediapipe bundle loaded but FaceLandmarker/FilesetResolver not found — the CDN may have changed its export format.");
+      }
 
       await setupCamera();
       await setupFaceLandmarker();
