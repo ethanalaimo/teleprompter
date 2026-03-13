@@ -1,0 +1,110 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Gaze Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Top bar -->
+  <header id="topBar" class="bar top">
+    <div class="left"><strong>Gaze Tracker</strong></div>
+
+    <!-- Metrics centered on the bar -->
+    <div id="metricsPanel" aria-hidden="true"></div>
+
+    <div class="right">
+      <span id="status">Loading…</span>
+
+      <button id="notesBtn" title="Teleprompter" style="display:none">Teleprompter</button>
+      <button id="voiceScrollBtn" title="Voice-driven line advance" style="display:none">Voice Scroll: On</button>
+      <button id="exitPrompterBtn" title="Show tracking overlay" style="display:none">Show Tracking</button>
+
+      <button id="startCalBtn" title="Recalibrate" style="display:none">Recalibrate</button>
+    </div>
+  </header>
+
+  <!-- Bottom bar -->
+  <footer id="bottomBar" class="bar bottom">
+    <div class="tip">Tip: keep your head steady during calibration; follow the dot with only your eyes.</div>
+  </footer>
+
+  <!-- Camera video: hidden normally, fullscreen during centering -->
+  <video id="cam" playsinline muted></video>
+
+  <!-- Teleprompter surface (replaces visible mesh/gaze, but tracking continues) -->
+  <section id="teleprompter" aria-hidden="true">
+    <div id="teleprompterContent" tabindex="0"></div>
+  </section>
+
+  <!-- LOOK UP cue (flashes over everything) -->
+  <div id="lookUpCue" aria-hidden="true">
+    <div class="lookUpText">LOOK UP</div>
+  </div>
+
+  <!-- Main overlay (gaze, mesh, etc.) -->
+  <canvas id="overlay"></canvas>
+
+  <!-- Calibration layer -->
+  <div id="calLayer" aria-hidden="true">
+    <div id="blackout"></div>
+
+    <!-- First screen -->
+    <button id="primeStartBtn">Start Calibration</button>
+
+    <!-- Face Centering stage -->
+    <div id="centerStage" aria-hidden="true">
+      <canvas id="centerCanvas"></canvas>
+      <div id="centerHUD">
+        <div id="centerTitle">Face Centering</div>
+        <div id="centerInstruction">Align your face to the outline. Keep eyes level. Hold still to continue.</div>
+        <div id="centerHint"></div>
+        <div id="centerProgress"><span id="centerPct">0%</span></div>
+      </div>
+    </div>
+
+    <!-- Dot calibration HUD -->
+    <div id="calCenterHUD">
+      <div id="calInstruction">Follow the dot with your eyes only.</div>
+      <div id="calProgress"></div>
+    </div>
+
+    <!-- Calibration target -->
+    <div id="calTarget">
+      <div class="outer"></div>
+      <div class="inner"></div>
+    </div>
+  </div>
+
+  <!-- Notes modal (paste speaker notes) -->
+  <div id="notesModal" class="modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="notesTitle">
+    <div class="modalCard">
+      <div class="modalHeader">
+        <div class="modalTitle" id="notesTitle">Teleprompter Notes</div>
+        <div class="modalSubtitle">Paste your speaker notes below. Large text is supported.</div>
+      </div>
+
+      <textarea
+        id="notesTextarea"
+        class="notesTextarea"
+        placeholder="Paste your speaker notes here…"
+        spellcheck="false"
+        autocapitalize="off"
+        autocomplete="off"
+        autocorrect="off"
+      ></textarea>
+
+      <div class="modalActions">
+        <button id="notesClearBtn" class="btn subtle" type="button">Clear</button>
+        <div class="spacer"></div>
+        <button id="notesCancelBtn" class="btn subtle" type="button">Cancel</button>
+        <button id="notesDoneBtn" class="btn primary" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
