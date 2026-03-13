@@ -84,6 +84,7 @@ const STOPWORDS = new Set([
 let recognition = null;
 let recognitionRunning = false;
 let speechSupported = false;
+let recognitionTranscript = ""; // full accumulated transcript for the current line
 
 // Landmark indices (MediaPipe)
 const RIGHT_EYE=[33,7,163,144,145,153,154,155,133,246,161,160,159,158,157,173];
@@ -1774,6 +1775,14 @@ function animateToLine(targetIdx, dir){
 function advanceLine(){
   const nextIdx = findNextSpeakableIndex(currentLineIndex);
   if(nextIdx < 0) return;
+
+  // Clear accumulated transcript immediately so words from the line we just
+  // finished don't carry over and accidentally match the next line.
+  recognitionTranscript = "";
+  if(voiceScrollEnabled && recognitionRunning){
+    try{ recognition.stop(); }catch{} // onend handler will restart it
+  }
+
   animateToLine(nextIdx, +1);
 }
 
@@ -1843,61 +1852,55 @@ function exitTeleprompterMode(silent){
 /* ---------- Speech Recognition ---------- */
 function initSpeechRecognition(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){
-    speechSupported = false;
-    return;
-  }
+  if(!SR){ speechSupported = false; return; }
   speechSupported = true;
 
   recognition = new SR();
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.lang = "en-US";
+  recognition.lang = navigator.language || “en-US”;
+  recognition.maxAlternatives = 1;
 
   recognition.onstart = ()=>{
+    recognitionTranscript = “”;
     recognitionRunning = true;
   };
 
   recognition.onerror = (e)=>{
     recognitionRunning = false;
+    // “no-speech” and “aborted” are normal events, not real errors
+    if(e.error === “no-speech” || e.error === “aborted”) return;
     if(teleprompterActive){
-      statusEl.textContent = `Mic error: ${e?.error || "unknown"}`;
+      statusEl.textContent = `Mic error: ${e?.error ?? “unknown”}`;
     }
   };
 
   recognition.onend = ()=>{
     recognitionRunning = false;
-    // Keep it running while teleprompter is active
-    if(teleprompterActive){
-      try{
-        recognition.start();
-      }catch{}
+    if(teleprompterActive && voiceScrollEnabled){
+      // Clear transcript so auto-restart begins with a clean slate
+      recognitionTranscript = “”;
+      try{ recognition.start(); }catch{}
     }
   };
 
   recognition.onresult = (event)=>{
-    let finalText = "";
-    let interimText = "";
-
-    for(let i=event.resultIndex; i<event.results.length; i++){
-      const res = event.results[i];
-      const t = (res?.[0]?.transcript || "").trim();
+    // Rebuild the FULL session transcript: all finals + current interim.
+    // This gives processSpokenText the complete context rather than just
+    // the latest chunk, so partial matches accumulate correctly.
+    let finals = “”;
+    let interim = “”;
+    for(let i = 0; i < event.results.length; i++){
+      const t = (event.results[i]?.[0]?.transcript || “”).trim();
       if(!t) continue;
-
-      if(res.isFinal) finalText += " " + t;
-      else interimText = t; // latest interim
+      if(event.results[i].isFinal) finals += “ “ + t;
+      else interim = t;
     }
+    recognitionTranscript = (finals.trim() + (interim ? “ “ + interim : “”)).trim();
+    if(!recognitionTranscript) return;
 
-    const spoken = (finalText.trim() || interimText.trim());
-    if(!spoken) return;
-
-    // Debug: confirm SpeechRecognition is actually producing text
-    if(teleprompterActive && statusEl){
-      const short = spoken.length > 60 ? spoken.slice(0,60) + "…" : spoken;
-      statusEl.textContent = `Heard: “${short}”`;
-    }
-
-    processSpokenText(spoken, !!finalText.trim());
+    // isFinal = no pending interim result (all results confirmed)
+    processSpokenText(recognitionTranscript, !interim);
   };
 }
 
@@ -1920,53 +1923,49 @@ function stopSpeechRecognition(){
   recognitionRunning = false;
 }
 
-/* Match spoken words against current line, advance when complete */
-function processSpokenText(spoken, isFinal){
+/* Match the full accumulated recognition transcript against the current line.
+   Because we restart recognition on each advance, this transcript is fresh
+   for every line — no carry-over from previous sentences. */
+function processSpokenText(transcript, isFinal){
   if(!teleprompterActive || !voiceScrollEnabled) return;
   if(!tpMatchTokens.length) return;
 
   const expected = tpMatchTokens[currentLineIndex] || [];
-  if(!expected.length) return;
+  // Blank / separator lines — skip immediately
+  if(!expected.length){ advanceLine(); return; }
 
-  const spokenTokens = tokenize(spoken);
+  const spokenTokens = tokenize(transcript);
   if(!spokenTokens.length) return;
 
-  // Match spoken tokens against expected tokens IN ORDER
-  let pos = currentTokenPos;
-
+  // Greedy forward scan: walk through spoken tokens and advance `pos` through
+  // expected tokens whenever there’s a match (exact or fuzzy prefix).
+  // A 1-2 token lookahead lets us stay on track when recognition drops a word.
+  let pos = 0;
   for(const st of spokenTokens){
     if(pos >= expected.length) break;
 
     if(tokenMatch(st, expected[pos])){
       pos++;
-      continue;
+    } else if(pos + 1 < expected.length && tokenMatch(st, expected[pos + 1])){
+      pos += 2; // skip one expected word (recognition dropped it)
+    } else if(pos + 2 < expected.length && tokenMatch(st, expected[pos + 2])){
+      pos += 3; // skip two expected words
     }
-
-    // small lookahead helps when recognition drops a word
-    if((pos + 1) < expected.length && tokenMatch(st, expected[pos + 1])){
-      pos += 2;
-      continue;
-    }
-    if((pos + 2) < expected.length && tokenMatch(st, expected[pos + 2])){
-      pos += 3;
-      continue;
-    }
+    // Otherwise this spoken word is noise — keep scanning without advancing pos
   }
 
-  if(pos > currentTokenPos) currentTokenPos = pos;
+  const ratio = pos / expected.length;
 
-  // ✅ Only advance when we’ve matched ALL expected tokens
-  if(currentTokenPos >= expected.length){
+  if(pos >= expected.length){
+    // Every expected token matched — advance now
     advanceLine();
-    return;
-  }
-
-  // Optional: if final result is very close on a long line, let it pass
-  if(isFinal && expected.length >= 10){
-    const ratio = currentTokenPos / expected.length;
-    if(ratio >= 0.92){
-      advanceLine();
-    }
+  } else if(isFinal && ratio >= 0.75 && expected.length >= 4){
+    // ≥75% of tokens confirmed on a final result → close enough, advance
+    advanceLine();
+  } else if(!isFinal && ratio >= 0.85 && expected.length >= 6){
+    // ≥85% matched on an interim result for a long line → speaker is clearly
+    // through it, don’t make them wait for recognition to finalize
+    advanceLine();
   }
 }
 
