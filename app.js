@@ -2,7 +2,7 @@
 // + Teleprompter (notes input modal + wheel UI + speech-driven autoadvance)
 // NOTE: Teleprompter hides overlay visuals but keeps tracking running for LOOK UP cue.
 
-import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.mjs";
 
 const overlay  = document.getElementById("overlay");
 const octx     = overlay.getContext("2d");
@@ -2026,6 +2026,7 @@ function processSpokenText(transcript, isFinal){
 
 /* ---------- Boot ---------- */
 (function start(){
+  window.__appStarted = true;
   (async ()=>{
     try{
       setupTeleprompterUI();

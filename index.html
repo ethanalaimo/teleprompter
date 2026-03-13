@@ -106,6 +106,38 @@
     </div>
   </div>
 
+  <!-- Watchdog: if app.js fails to load (CDN import error, network, CORS),
+       the module never executes and the page stays frozen on "Loading…".
+       This script runs outside the module so it can detect that failure. -->
+  <script>
+    // Fires for syntax errors and runtime errors inside loaded scripts
+    window.addEventListener('error', function(e) {
+      var s = document.getElementById('status');
+      if (s && s.textContent === 'Loading\u2026') {
+        s.textContent = 'Script error: ' + (e.message || 'unknown') +
+          ' \u2014 open DevTools (F12 \u2192 Console) for details';
+      }
+    });
+    // Fires for rejected promises (e.g. dynamic import failures)
+    window.addEventListener('unhandledrejection', function(e) {
+      var s = document.getElementById('status');
+      if (s && s.textContent === 'Loading\u2026') {
+        var msg = (e.reason && (e.reason.message || String(e.reason))) || 'unknown';
+        s.textContent = 'Load error: ' + msg +
+          ' \u2014 open DevTools (F12 \u2192 Console) for details';
+      }
+    });
+    // Fallback timeout: if __appStarted is never set, the module import itself
+    // failed (net error, CORS, wrong MIME type) and no JS event fires.
+    setTimeout(function() {
+      if (!window.__appStarted) {
+        var s = document.getElementById('status');
+        if (s) s.textContent =
+          'Failed to load app.js \u2014 check your network and open DevTools (F12 \u2192 Console) for details';
+      }
+    }, 10000);
+  </script>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>
