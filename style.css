@@ -1,0 +1,403 @@
+/* styles.css */
+:root{
+  --bar-bg: rgba(24,24,28,0.85);
+  --bar-fg: #e9eef9;
+  --accent: #56b3ff;
+  --good: #22c55e;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  color: var(--bar-fg);
+}
+.hidden { display: none !important; }
+
+/* Bars */
+.bar {
+  position: fixed; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bar-bg);
+  backdrop-filter: blur(6px);
+  z-index: 600;
+}
+.bar.top { top: 0; }
+.bar.bottom { bottom: 0; }
+.bar .right { display: flex; gap: 10px; align-items: center; }
+.bar button {
+  background: #1f2937; color: #e9eef9; border: 1px solid #2f3b52;
+  padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  font-size: 13px;
+}
+.bar button:hover { border-color: var(--accent); }
+
+/* Camera video */
+#cam { position: fixed; width: 1px; height: 1px; left: -9999px; top: -9999px; }
+#cam.preview {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh; object-fit: cover;
+  z-index: 10000;
+  filter: saturate(105%) contrast(105%) brightness(98%);
+  transform: scaleX(-1);
+  transform-origin: center center;
+}
+
+/* Main overlay (gaze, mesh) */
+#overlay {
+  position: fixed; inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+  width: 100vw; height: 100vh;
+  opacity: 1;
+  transition: opacity 160ms ease;
+}
+
+/* Metrics HUD centered on the top bar */
+#metricsPanel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 650;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(15,23,42,0.75);
+  border: 1px solid rgba(148,163,184,0.6);
+  font-size: 11px;
+  color: #e5e7eb;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Calibration layer */
+#calLayer { position: fixed; inset: 0; z-index: 11000; display: none; }
+#blackout {
+  position: absolute; inset: 0; background: #000;
+  transition: opacity 350ms ease; opacity: 0;
+}
+
+/* Start button */
+#primeStartBtn {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: 10px 14px; border-radius: 10px; border: 1px solid #2f3b52;
+  background: #111827; color: #e9eef9; cursor: pointer; font-size: 16px;
+  z-index: 11005;
+}
+#primeStartBtn:hover { border-color: var(--accent); }
+
+/* Face Centering stage */
+#centerStage { position: fixed; inset: 0; display: none; z-index: 11002; }
+#centerCanvas {
+  position: fixed; inset: 0; width: 100vw; height: 100vh;
+  z-index: 11003; pointer-events: none;
+  transform: scaleX(-1);
+  transform-origin: center center;
+}
+#centerHUD {
+  position: fixed; left:50%; top:7%; transform: translateX(-50%);
+  text-align: center; width: min(780px, 92vw); color: #eef3ff;
+  z-index: 11004; pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.45);
+}
+#centerTitle { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+#centerInstruction { font-size: 16px; opacity: 0.95; }
+#centerHint {
+  font-size: 20px; font-weight: 800;
+  opacity: 0.98; margin-top: 10px; min-height: 26px;
+}
+#centerProgress {
+  margin: 12px auto 0; width: 80px; height: 80px;
+  border-radius: 999px; border: 2px solid rgba(255,255,255,0.35);
+  display: grid; place-items: center;
+  background: rgba(0,0,0,0.15);
+}
+#centerPct { font-weight: 800; }
+
+/* Dot calibration HUD */
+#calCenterHUD{
+  position: absolute; left:50%; top:40%; transform: translate(-50%,-50%);
+  width: min(720px, 86vw);
+  text-align: center; color: #e9eef9;
+  pointer-events: none; display: none; z-index: 11004;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.45);
+  opacity: 0; transition: opacity 350ms ease;
+}
+#calInstruction{ font-size: 18px; line-height: 1.35; opacity: 0.95; }
+#calProgress{ margin-top: 10px; font-size: 16px; opacity: 0.95; }
+
+/* Calibration target */
+#calTarget {
+  position: absolute; transform: translate(-50%, -50%);
+  width: 42px; height: 42px; pointer-events: none; display: none;
+  opacity: 0; transition: opacity 350ms ease;
+  z-index: 11004;
+}
+#calTarget.show { opacity: 1; }
+#calTarget .outer { position: absolute; inset: 0; border-radius: 999px; background: #666; box-shadow: 0 0 0 2px #888 inset; }
+#calTarget .inner {
+  --pct: 0;
+  position: absolute; left: 50%; top: 50%;
+  width: calc(42px * var(--pct));
+  height: calc(42px * var(--pct));
+  transform: translate(-50%, -50%);
+  border-radius: 999px; background: #fff;
+  transition: width 80ms linear, height 80ms linear;
+}
+
+/* Space for bars */
+body { padding-top: 44px; padding-bottom: 44px; }
+@media (max-width: 640px){
+  body { padding-top: 48px; padding-bottom: 56px; }
+}
+
+/* LOOK UP cue (cut-flash) */
+#lookUpCue{
+  position: fixed;
+  inset: 0;
+  display: none;
+  place-items: center;
+  z-index: 15000; /* keep above teleprompter + modals */
+}
+#lookUpCue.active{
+  display: grid;
+  animation: lookUpFlash 1.0s steps(1, end) infinite;
+}
+#lookUpCue .lookUpText{
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: clamp(48px, 10vw, 150px);
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  mix-blend-mode: difference;
+  color: #fff;
+}
+@keyframes lookUpFlash{
+  0%, 49.999%   { background: #fff; }
+  50%, 99.999%  { background: #000; }
+  100%          { background: #fff; }
+}
+
+/* =========================
+   Teleprompter Wheel UI
+   ========================= */
+
+#teleprompter {
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 13000;
+  background: rgba(0,0,0,0.92);
+}
+
+#teleprompter.active {
+  display: block;
+}
+
+#teleprompterContent {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 0 8vw;
+}
+
+/* Exit button (JS uses #tpExitBtn) */
+#tpExitBtn{
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 13010;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.92);
+  cursor: pointer;
+  font-size: 13px;
+}
+#tpExitBtn:hover{ border-color: rgba(86,179,255,0.7); }
+
+.tp-wheelWrap {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(92vw, 1200px);
+}
+
+.tp-wheel {
+  /* gap between lines (make this BIG so only one line feels "on-screen") */
+  --tp-gap: clamp(240px, 42vh, 560px);
+
+  position: relative;
+  transform: translateY(0);
+  transition: transform 420ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  will-change: transform;
+}
+
+.tp-wheel.no-anim {
+  transition: none !important;
+}
+
+.tp-wheel.shift-up {
+  transform: translateY(calc(-1 * var(--tp-gap)));
+}
+
+.tp-wheel.shift-down {
+  transform: translateY(var(--tp-gap));
+}
+
+.tp-line {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  text-align: center;
+
+  /* bigger + airier */
+  font-size: clamp(44px, 5.2vw, 78px);
+  line-height: 1.25;
+  letter-spacing: 0.01em;
+
+  color: rgba(255,255,255,0.92);
+  text-shadow: 0 2px 22px rgba(0,0,0,0.55);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+.tp-prev {
+  transform: translateY(calc(-1 * var(--tp-gap)));
+  opacity: 0.10;
+}
+
+.tp-current {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.tp-next {
+  transform: translateY(var(--tp-gap));
+  opacity: 0.10;
+}
+
+/* =========================
+   Notes Modal (aligns w/ JS: #notesModal + .panel + textarea)
+   Also keeps your legacy .modal styles working.
+   ========================= */
+
+.modal,
+#notesModal{
+  position: fixed;
+  inset: 0;
+  display: none;
+  z-index: 14000;
+  background: rgba(0,0,0,0.74);
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.modal.show,
+#notesModal.active{
+  display: flex;
+}
+
+/* Legacy card + JS panel */
+.modalCard,
+#notesModal .panel{
+  width: min(980px, 95vw);
+  height: min(78vh, 760px);
+  background: rgba(15,23,42,0.94);
+  border: 1px solid rgba(148,163,184,0.35);
+  border-radius: 16px;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Legacy header + JS header */
+.modalHeader,
+#notesModal .header{
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid rgba(148,163,184,0.22);
+  color: #e5e7eb;
+}
+
+/* If you use legacy title/subtitle */
+.modalTitle{
+  font-size: 16px;
+  font-weight: 800;
+  color: #e5e7eb;
+}
+.modalSubtitle{
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(229,231,235,0.78);
+}
+
+/* Legacy textarea + JS textarea */
+.notesTextarea,
+#notesModal textarea{
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 14px 16px;
+  background: rgba(2,6,23,0.55);
+  color: #e5e7eb;
+  font-size: 14px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Legacy actions + JS footer */
+.modalActions,
+#notesModal .footer{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(148,163,184,0.22);
+  background: rgba(15,23,42,0.92);
+  justify-content: flex-end;
+}
+.modalActions .spacer{ flex: 1; }
+
+/* Legacy buttons + JS buttons */
+.btn,
+#notesModal button{
+  border: 1px solid rgba(148,163,184,0.35);
+  background: rgba(31,41,55,0.9);
+  color: #e5e7eb;
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover,
+#notesModal button:hover{
+  border-color: rgba(86,179,255,0.7);
+}
+
+.btn.primary,
+#notesModal button.primary{
+  background: rgba(86,179,255,0.25);
+  border-color: rgba(86,179,255,0.55);
+}
+.btn.primary:hover,
+#notesModal button.primary:hover{
+  background: rgba(86,179,255,0.34);
+}
+.btn.subtle{
+  background: rgba(31,41,55,0.75);
+}
