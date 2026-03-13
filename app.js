@@ -2,8 +2,9 @@
 // + Teleprompter (notes input modal + wheel UI + speech-driven autoadvance)
 // NOTE: Teleprompter hides overlay visuals but keeps tracking running for LOOK UP cue.
 
-// FaceLandmarker and FilesetResolver are loaded via dynamic import in start()
-// so the module body runs immediately and we can show loading status to the user.
+// FaceLandmarker and FilesetResolver are populated after the script-tag load
+// in start(). The bundle must be loaded as a classic <script> (not import())
+// because it contains Emscripten WASM glue that is invalid in strict ES module mode.
 let FaceLandmarker, FilesetResolver;
 
 const overlay  = document.getElementById("overlay");
@@ -2033,15 +2034,27 @@ function processSpokenText(transcript, isFinal){
     try{
       setupTeleprompterUI();
 
-      // Load the mediapipe bundle dynamically so the page isn't silently
-      // frozen waiting on a large CDN file before any JS runs.
-      // Supports both named-export builds and default-export (UMD) builds.
+      // Load the mediapipe bundle via a classic <script> tag.
+      // dynamic import() cannot be used because vision_bundle.js contains
+      // Emscripten-generated WASM glue code that is invalid in strict ES module mode.
       statusEl.textContent = "Loading face detection model…";
-      const mp = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js");
-      FaceLandmarker   = mp.FaceLandmarker   ?? mp.default?.FaceLandmarker;
-      FilesetResolver  = mp.FilesetResolver  ?? mp.default?.FilesetResolver;
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
+        s.crossOrigin = "anonymous";
+        s.onload = resolve;
+        s.onerror = () => reject(new Error(
+          "Failed to load face detection model from CDN — check your network connection and try refreshing."
+        ));
+        document.head.appendChild(s);
+      });
+      FaceLandmarker  = window.FaceLandmarker;
+      FilesetResolver = window.FilesetResolver;
       if(!FaceLandmarker || !FilesetResolver){
-        throw new Error("mediapipe bundle loaded but FaceLandmarker/FilesetResolver not found — the CDN may have changed its export format.");
+        throw new Error(
+          "Mediapipe bundle loaded but FaceLandmarker/FilesetResolver globals not found. " +
+          "Open DevTools console for details."
+        );
       }
 
       await setupCamera();
