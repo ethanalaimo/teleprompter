@@ -2,10 +2,7 @@
 // + Teleprompter (notes input modal + wheel UI + speech-driven autoadvance)
 // NOTE: Teleprompter hides overlay visuals but keeps tracking running for LOOK UP cue.
 
-// FaceLandmarker and FilesetResolver are populated after the script-tag load
-// in start(). The bundle must be loaded as a classic <script> (not import())
-// because it contains Emscripten WASM glue that is invalid in strict ES module mode.
-let FaceLandmarker, FilesetResolver;
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
 
 const overlay  = document.getElementById("overlay");
 const octx     = overlay.getContext("2d");
@@ -357,69 +354,25 @@ function applyAffine2D(A,p){
 
 /* ---------- Camera / Model ---------- */
 async function setupCamera(){
-  if(!navigator.mediaDevices?.getUserMedia){
-    throw new Error("Camera API unavailable — open the page over HTTPS and try again.");
-  }
-
-  statusEl.textContent = "Requesting camera access…";
-
-  let stream;
-  try{
-    stream = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:"user", width:{ ideal:1280 }, height:{ ideal:720 } },
-      audio: false
-    });
-  }catch(err){
-    const friendly = {
-      NotAllowedError:  "Camera permission denied — click the camera icon in the address bar, allow access, then refresh.",
-      PermissionDeniedError: "Camera permission denied — allow camera access in your browser settings and refresh.",
-      NotFoundError:    "No camera found — connect a camera and refresh.",
-      DevicesNotFoundError: "No camera found — connect a camera and refresh.",
-      NotReadableError: "Camera is in use by another app — close other apps using the camera and refresh.",
-      TrackStartError:  "Camera is in use by another app — close other apps using the camera and refresh.",
-    }[err.name];
-    throw new Error(friendly || `Camera error (${err.name}): ${err.message}`);
-  }
-
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:"user", width:{ideal:1280}, height:{ideal:720}},
+    audio:false
+  });
   video.srcObject = stream;
-  video.muted     = true;
-  video.playsInline = true;
-
-  // play() resolves once the browser is actually playing; for a live
-  // MediaStream it also triggers the canplay/loadeddata chain.
-  statusEl.textContent = "Starting video stream…";
-  console.log("[boot] video.play()…");
   await video.play();
-  console.log("[boot] video playing. readyState=", video.readyState);
-
-  // If the browser resolved play() before the first frame was decoded
-  // (readyState 2), wait for it — detectForVideo needs at least one frame.
-  if(video.readyState < 2){
-    statusEl.textContent = "Waiting for first video frame…";
-    await new Promise(resolve =>
-      video.addEventListener("canplay", resolve, { once: true })
-    );
-  }
-
+  await new Promise(r=> video.readyState>=2 ? r() : (video.onloadedmetadata=r));
   resizeCanvasToCSS();
 }
-
 async function setupFaceLandmarker(){
-  statusEl.textContent = "Loading face model…";
-  try{
-    const filesetResolver = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-    );
-    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
-      numFaces:1, runningMode:"VIDEO",
-      outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
-      minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
-    });
-  }catch(err){
-    throw new Error(`Failed to load face model — check your internet connection. (${err.message})`);
-  }
-  statusEl.textContent = "Ready — press Start Calibration";
+  statusEl.textContent="Loading model…";
+  const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
+  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver,{
+    baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
+    numFaces:1, runningMode:"VIDEO",
+    outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
+    minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
+  });
+  statusEl.textContent="Ready — press Start Calibration";
 }
 
 /* ---------- Drawing sizes ---------- */
@@ -2034,41 +1987,11 @@ function processSpokenText(transcript, isFinal){
 
 /* ---------- Boot ---------- */
 (function start(){
-  window.__appStarted = true;
   (async ()=>{
     try{
-      statusEl.textContent = "Initialising UI…";
       setupTeleprompterUI();
 
-      // Load the mediapipe bundle via a classic <script> tag.
-      // dynamic import() cannot be used because vision_bundle.js contains
-      // Emscripten-generated WASM glue code that is invalid in strict ES module mode.
-      statusEl.textContent = "Loading face detection model…";
-      console.log("[boot] fetching mediapipe bundle…");
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
-        s.crossOrigin = "anonymous";
-        s.onload = resolve;
-        s.onerror = () => reject(new Error(
-          "Failed to load face detection model from CDN — check your network connection and try refreshing."
-        ));
-        document.head.appendChild(s);
-      });
-      console.log("[boot] mediapipe bundle loaded. window.FaceLandmarker=", typeof window.FaceLandmarker, "window.FilesetResolver=", typeof window.FilesetResolver);
-      FaceLandmarker  = window.FaceLandmarker;
-      FilesetResolver = window.FilesetResolver;
-      if(!FaceLandmarker || !FilesetResolver){
-        throw new Error(
-          "Mediapipe bundle loaded but FaceLandmarker/FilesetResolver globals not found. " +
-          "Open DevTools console for details."
-        );
-      }
-
-      statusEl.textContent = "Starting camera…";
-      console.log("[boot] calling setupCamera…");
       await setupCamera();
-      console.log("[boot] camera ready. calling setupFaceLandmarker…");
       await setupFaceLandmarker();
       running=true;
       statusEl.textContent="Ready — press Start Calibration";
@@ -2093,9 +2016,8 @@ function processSpokenText(transcript, isFinal){
       })();
     }catch(e){
       console.error(e);
-      const msg = e.message || "Initialization failed — check the console for details.";
-      statusEl.textContent = msg;
-      alert(msg);
+      statusEl.textContent="Permission or init error";
+      alert("Could not access the camera or load the model. Check permissions and try again.");
     }
   })();
 })();
