@@ -1752,14 +1752,30 @@ function animateToLine(targetIdx, dir){
   if(tpAnimating || !tpWheelEl) return;
   tpAnimating = true;
 
-  renderWheel();
+  renderWheel(); // text slots: prev=before-current, cur=current, next=after-current
 
   tpWheelEl.classList.remove("shift-up","shift-down");
-  void tpWheelEl.offsetWidth;
+  void tpWheelEl.offsetWidth; // force reflow so transition starts clean
+
+  // Swap highlight immediately at the start of the move — the incoming line
+  // lights up now rather than waiting 420ms for the position to settle.
+  if(dir > 0){
+    tpCurEl.style.opacity  = "0.10"; // outgoing: dim to match non-active state
+    tpNextEl.style.opacity = "1";    // incoming: highlight now
+  } else {
+    tpCurEl.style.opacity  = "0.10"; // outgoing: dim to match non-active state
+    tpPrevEl.style.opacity = "1";    // incoming: highlight now
+  }
 
   tpWheelEl.classList.add(dir > 0 ? "shift-up" : "shift-down");
 
   setTimeout(()=>{
+    // Clear inline overrides before setCurrentLine reassigns text and the
+    // CSS class-based opacities take over (.tp-current → 1, rest → 0.10).
+    tpCurEl.style.opacity  = "";
+    tpNextEl.style.opacity = "";
+    tpPrevEl.style.opacity = "";
+
     tpWheelEl.classList.add("no-anim");
     tpWheelEl.classList.remove("shift-up","shift-down");
 
