@@ -354,25 +354,64 @@ function applyAffine2D(A,p){
 
 /* ---------- Camera / Model ---------- */
 async function setupCamera(){
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{facingMode:"user", width:{ideal:1280}, height:{ideal:720}},
-    audio:false
-  });
+  if(!navigator.mediaDevices?.getUserMedia){
+    throw new Error("Camera API unavailable — open the page over HTTPS and try again.");
+  }
+
+  statusEl.textContent = "Requesting camera access…";
+
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:"user", width:{ ideal:1280 }, height:{ ideal:720 } },
+      audio: false
+    });
+  }catch(err){
+    const friendly = {
+      NotAllowedError:  "Camera permission denied — click the camera icon in the address bar, allow access, then refresh.",
+      PermissionDeniedError: "Camera permission denied — allow camera access in your browser settings and refresh.",
+      NotFoundError:    "No camera found — connect a camera and refresh.",
+      DevicesNotFoundError: "No camera found — connect a camera and refresh.",
+      NotReadableError: "Camera is in use by another app — close other apps using the camera and refresh.",
+      TrackStartError:  "Camera is in use by another app — close other apps using the camera and refresh.",
+    }[err.name];
+    throw new Error(friendly || `Camera error (${err.name}): ${err.message}`);
+  }
+
   video.srcObject = stream;
-  await video.play();
-  await new Promise(r=> video.readyState>=2 ? r() : (video.onloadedmetadata=r));
+
+  // Wait for enough video data to begin reading frames.
+  // Use addEventListener({ once }) + both canplay/loadeddata so we don't
+  // miss the event if readyState already advanced past 1 (loadedmetadata).
+  await new Promise((resolve, reject) => {
+    if(video.readyState >= 2){ resolve(); return; }
+    video.addEventListener("canplay",    resolve, { once: true });
+    video.addEventListener("loadeddata", resolve, { once: true });
+    video.play().catch(reject);
+  });
+
+  if(!video.paused) { /* already playing from the event handler */ }
+  else { await video.play(); }
+
   resizeCanvasToCSS();
 }
+
 async function setupFaceLandmarker(){
-  statusEl.textContent="Loading model…";
-  const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver,{
-    baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
-    numFaces:1, runningMode:"VIDEO",
-    outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
-    minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
-  });
-  statusEl.textContent="Ready — press Start Calibration";
+  statusEl.textContent = "Loading face model…";
+  try{
+    const filesetResolver = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    );
+    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
+      numFaces:1, runningMode:"VIDEO",
+      outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
+      minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
+    });
+  }catch(err){
+    throw new Error(`Failed to load face model — check your internet connection. (${err.message})`);
+  }
+  statusEl.textContent = "Ready — press Start Calibration";
 }
 
 /* ---------- Drawing sizes ---------- */
@@ -2016,8 +2055,9 @@ function processSpokenText(transcript, isFinal){
       })();
     }catch(e){
       console.error(e);
-      statusEl.textContent="Permission or init error";
-      alert("Could not access the camera or load the model. Check permissions and try again.");
+      const msg = e.message || "Initialization failed — check the console for details.";
+      statusEl.textContent = msg;
+      alert(msg);
     }
   })();
 })();
