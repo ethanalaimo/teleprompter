@@ -50,10 +50,14 @@ let notesModal = null;
 let notesTextarea = null;
 let notesDoneBtn = null;
 let notesCancelBtn = null;
+let exitPrompterBtnEl = null;
+let voiceScrollBtnEl = null;
 
 let teleprompterEl = null;
 let tpContentEl = null;
 let tpExitBtn = null;
+
+let voiceScrollEnabled = true;
 
 let tpLines = [];
 let tpTokens = [];
@@ -846,15 +850,6 @@ function drawFrame(result){
   }
 }
 
-/* ---------- Loop ---------- */
-async function loop(){
-  if(!running) return;
-  const now=performance.now();
-  lastResult = faceLandmarker.detectForVideo(video, now);
-  drawFrame(lastResult);
-  requestAnimationFrame(loop);
-}
-
 /* ---------- Face Centering stage (rectangle → face-outline morph) ---------- */
 let centeringActive=false, centerHoldMs=0, greenFlashMs=0;
 const CENTER_HOLD_REQUIRED_MS = 1800; // ≤ 2 seconds
@@ -1383,13 +1378,13 @@ function stopCalibration(msg){
 
   if(hasCalibrated){
     bottomBar.classList.add("hidden");
-    if (bottomBar) bottomBar.style.display = "none";
 
     // Only show overlay visuals if NOT in teleprompter mode
     overlaysEnabled = !teleprompterActive;
 
-    startCalBtn.style.display = "inline-block";
+    startCalBtn.classList.remove("hidden");
     startCalBtn.textContent = "Recalibrate";
+    if(tpBtn) tpBtn.classList.remove("hidden");
 
     resetRegionStats();
   } else {
@@ -1514,271 +1509,75 @@ async function tweenDotTo(nx,ny,durationMs){
    ============================================================ */
 
 function injectTeleprompterStyles(){
-  const id = "teleprompterStyles";
-  if(document.getElementById(id)) return;
-
-  const style = document.createElement("style");
-  style.id = id;
-  style.textContent = `
-    /* Notes modal */
-    #notesModal {
-      position: fixed;
-      inset: 0;
-      display: none;
-      z-index: 14000;
-      background: rgba(0,0,0,0.72);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      align-items: center;
-      justify-content: center;
-      padding: 22px;
-    }
-    #notesModal.active { display: flex; }
-    #notesModal .panel {
-      width: min(980px, 92vw);
-      height: min(78vh, 720px);
-      background: rgba(14,14,18,0.96);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 16px;
-      box-shadow: 0 18px 70px rgba(0,0,0,0.55);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    #notesModal .header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 16px;
-      border-bottom: 1px solid rgba(255,255,255,0.10);
-      color: rgba(255,255,255,0.92);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      font-size: 14px;
-    }
-    #notesModal textarea {
-      flex: 1;
-      width: 100%;
-      resize: none;
-      border: none;
-      outline: none;
-      padding: 16px;
-      background: rgba(0,0,0,0.35);
-      color: rgba(255,255,255,0.92);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    #notesModal .footer {
-      display: flex;
-      gap: 10px;
-      justify-content: flex-end;
-      padding: 14px 16px;
-      border-top: 1px solid rgba(255,255,255,0.10);
-    }
-    #notesModal button {
-      padding: 9px 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(255,255,255,0.08);
-      color: rgba(255,255,255,0.92);
-      cursor: pointer;
-      font-size: 13px;
-    }
-    #notesModal button.primary {
-      background: rgba(255,255,255,0.18);
-      border-color: rgba(255,255,255,0.22);
-    }
-
-    /* Teleprompter overlay */
-    #teleprompter {
-      position: fixed;
-      inset: 0;
-      display: none;
-      z-index: 13000;
-      background: rgba(0,0,0,0.92);
-    }
-    #teleprompter.active { display: block; }
-
-    #teleprompterContent {
-      position: absolute;
-      inset: 0;
-      overflow: hidden;
-      user-select: none;
-      -webkit-user-select: none;
-      padding: 0 8vw;
-    }
-
-    #tpExitBtn {
-      position: absolute;
-      top: 14px;
-      right: 14px;
-      z-index: 13010;
-      padding: 9px 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(255,255,255,0.08);
-      color: rgba(255,255,255,0.92);
-      cursor: pointer;
-      font-size: 13px;
-    }
-
-    /* Wheel layout */
-    .tp-wheelWrap {
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      width: min(92vw, 1200px);
-    }
-    .tp-wheel {
-      --tp-gap: clamp(240px, 42vh, 560px);
-      position: relative;
-      transform: translateY(0);
-      transition: transform 420ms cubic-bezier(0.2, 0.9, 0.2, 1);
-      will-change: transform;
-    }
-    .tp-wheel.no-anim { transition: none !important; }
-    .tp-wheel.shift-up { transform: translateY(calc(-1 * var(--tp-gap))); }
-    .tp-wheel.shift-down { transform: translateY(var(--tp-gap)); }
-
-    .tp-line {
-      position: absolute;
-      left: 0;
-      width: 100%;
-      text-align: center;
-
-      /* Bigger + airier */
-      font-size: clamp(44px, 5.2vw, 78px);
-      line-height: 1.25;
-      letter-spacing: 0.01em;
-
-      color: rgba(255,255,255,0.92);
-      text-shadow: 0 2px 22px rgba(0,0,0,0.55);
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    }
-    .tp-prev { transform: translateY(calc(-1 * var(--tp-gap))); opacity: 0.10; }
-    .tp-current { transform: translateY(0); opacity: 1; }
-    .tp-next { transform: translateY(var(--tp-gap)); opacity: 0.10; }
-  `;
-  document.head.appendChild(style);
+  // Styles are defined in style.css — nothing to inject.
 }
 
 function setupTeleprompterUI(){
-  injectTeleprompterStyles();
+  // Wire up existing HTML elements — no DOM creation needed.
+  tpBtn            = document.getElementById("notesBtn");
+  notesModal       = document.getElementById("notesModal");
+  notesTextarea    = document.getElementById("notesTextarea");
+  notesDoneBtn     = document.getElementById("notesDoneBtn");
+  notesCancelBtn   = document.getElementById("notesCancelBtn");
+  teleprompterEl   = document.getElementById("teleprompter");
+  tpContentEl      = document.getElementById("teleprompterContent");
+  tpExitBtn        = document.getElementById("tpExitBtn");
+  exitPrompterBtnEl = document.getElementById("exitPrompterBtn");
+  voiceScrollBtnEl  = document.getElementById("voiceScrollBtn");
 
-  // Add Teleprompter button to top bar (no HTML edits needed)
-  if(topBar && !tpBtn){
-    tpBtn = document.createElement("button");
-    tpBtn.id = "teleprompterBtn";
-    tpBtn.textContent = "Teleprompter";
+  const notesClearBtn = document.getElementById("notesClearBtn");
 
-    // Try to inherit similar styling if startCalBtn exists
-    if(startCalBtn && startCalBtn.className){
-      tpBtn.className = startCalBtn.className;
-    } else {
-      tpBtn.style.padding = "8px 12px";
-      tpBtn.style.borderRadius = "10px";
-      tpBtn.style.border = "1px solid rgba(255,255,255,0.14)";
-      tpBtn.style.background = "rgba(255,255,255,0.08)";
-      tpBtn.style.color = "rgba(255,255,255,0.92)";
-      tpBtn.style.cursor = "pointer";
+  // Teleprompter button
+  tpBtn.addEventListener("click", ()=>{
+    if(isCalibrating) return;
+    if(!hasCalibrated){
+      statusEl.textContent = "Calibrate first, then open teleprompter.";
+      return;
     }
+    openNotesModal();
+  });
 
-    tpBtn.addEventListener("click", ()=>{
-      if(isCalibrating) return;
-      if(!hasCalibrated){
-        statusEl.textContent = "Calibrate first, then open teleprompter.";
-        return;
-      }
-      openNotesModal();
-    });
+  // Notes modal buttons
+  notesCancelBtn.addEventListener("click", closeNotesModal);
+  notesDoneBtn.addEventListener("click", ()=>{
+    const t = (notesTextarea.value || "").trim();
+    if(!t){ statusEl.textContent = "Paste some notes first."; return; }
+    closeNotesModal();
+    applyNotesToTeleprompter(t);
+    enterTeleprompterMode();
+  });
+  notesClearBtn.addEventListener("click", ()=>{
+    notesTextarea.value = "";
+    notesText = "";
+  });
+  notesModal.addEventListener("click", (e)=>{
+    if(e.target === notesModal) closeNotesModal();
+  });
 
-    topBar.appendChild(tpBtn);
-  }
+  // Exit teleprompter buttons
+  tpExitBtn.addEventListener("click", ()=>exitTeleprompterMode(false));
+  exitPrompterBtnEl.addEventListener("click", ()=>exitTeleprompterMode(false));
 
-  // Notes modal
-  if(!notesModal){
-    notesModal = document.createElement("div");
-    notesModal.id = "notesModal";
-    notesModal.innerHTML = `
-      <div class="panel" role="dialog" aria-modal="true" aria-label="Speaker notes">
-        <div class="header">
-          <div><strong>Paste speaker notes</strong> (large text supported)</div>
-          <div style="opacity:.7;font-size:12px;">Esc to close</div>
-        </div>
-        <textarea id="notesTextarea" spellcheck="false" placeholder="Paste your speaker notes here..."></textarea>
-        <div class="footer">
-          <button id="notesCancelBtn">Cancel</button>
-          <button id="notesDoneBtn" class="primary">Done</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(notesModal);
-
-    notesTextarea = notesModal.querySelector("#notesTextarea");
-    notesDoneBtn = notesModal.querySelector("#notesDoneBtn");
-    notesCancelBtn = notesModal.querySelector("#notesCancelBtn");
-
-    notesCancelBtn.addEventListener("click", closeNotesModal);
-    notesDoneBtn.addEventListener("click", ()=>{
-      const t = (notesTextarea.value || "").trim();
-      if(!t){
-        statusEl.textContent = "Paste some notes first.";
-        return;
-      }
-      closeNotesModal();
-
-      applyNotesToTeleprompter(t);
-      enterTeleprompterMode();
-    });
-
-    notesModal.addEventListener("click", (e)=>{
-      if(e.target === notesModal) closeNotesModal();
-    });
-  }
-
-  // Teleprompter overlay
-  if(!teleprompterEl){
-    teleprompterEl = document.createElement("div");
-    teleprompterEl.id = "teleprompter";
-    teleprompterEl.innerHTML = `
-      <button id="tpExitBtn" title="Exit teleprompter">Exit</button>
-      <div id="teleprompterContent"></div>
-    `;
-    document.body.appendChild(teleprompterEl);
-
-    tpContentEl = teleprompterEl.querySelector("#teleprompterContent");
-    tpExitBtn = teleprompterEl.querySelector("#tpExitBtn");
-
-    tpExitBtn.addEventListener("click", ()=>exitTeleprompterMode(false));
-  }
+  // Voice scroll toggle
+  voiceScrollBtnEl.addEventListener("click", ()=>{
+    voiceScrollEnabled = !voiceScrollEnabled;
+    voiceScrollBtnEl.textContent = `Voice Scroll: ${voiceScrollEnabled ? "On" : "Off"}`;
+    if(!voiceScrollEnabled) stopSpeechRecognition();
+    else if(teleprompterActive) startSpeechRecognition();
+  });
 
   initSpeechRecognition();
 
-  // Key controls
+  // Keyboard controls
   document.addEventListener("keydown", (e)=>{
     if(notesModalOpen){
-      if(e.key === "Escape"){
-        e.preventDefault();
-        closeNotesModal();
-      }
+      if(e.key === "Escape"){ e.preventDefault(); closeNotesModal(); }
       return;
     }
-
     if(teleprompterActive){
-      if(e.key === "Escape"){
-        e.preventDefault();
-        exitTeleprompterMode(false);
-        return;
-      }
-      if(e.key === " " || e.key === "ArrowDown"){
-        e.preventDefault();
-        advanceLine();
-      }
-      if(e.key === "ArrowUp"){
-        e.preventDefault();
-        goBackLine();
-      }
+      if(e.key === "Escape"){ e.preventDefault(); exitTeleprompterMode(false); return; }
+      if(e.key === " " || e.key === "ArrowDown"){ e.preventDefault(); advanceLine(); }
+      if(e.key === "ArrowUp"){ e.preventDefault(); goBackLine(); }
     }
   });
 }
@@ -1787,6 +1586,7 @@ function openNotesModal(){
   if(!notesModal) return;
   notesModalOpen = true;
   notesModal.classList.add("active");
+  notesModal.removeAttribute("aria-hidden");
   notesTextarea.value = notesText || "";
   setTimeout(()=>notesTextarea.focus(), 50);
 }
@@ -1795,6 +1595,7 @@ function closeNotesModal(){
   if(!notesModal) return;
   notesModalOpen = false;
   notesModal.classList.remove("active");
+  notesModal.setAttribute("aria-hidden", "true");
   notesText = notesTextarea.value || notesText;
 }
 
@@ -2003,29 +1804,40 @@ function enterTeleprompterMode(){
   overlaysEnabled = false;
 
   teleprompterEl.classList.add("active");
+  teleprompterEl.removeAttribute("aria-hidden");
 
-  // Ensure LOOK UP cue stays above prompter overlay if needed
+  // Ensure LOOK UP cue stays above prompter overlay
   if(lookUpCue) lookUpCue.style.zIndex = "15000";
 
-  // Start speech
-  startSpeechRecognition();
-  statusEl.textContent = speechSupported
+  // Swap top-bar buttons
+  if(tpBtn) tpBtn.classList.add("hidden");
+  if(exitPrompterBtnEl) exitPrompterBtnEl.classList.remove("hidden");
+  if(voiceScrollBtnEl)  voiceScrollBtnEl.classList.remove("hidden");
+
+  if(voiceScrollEnabled) startSpeechRecognition();
+  statusEl.textContent = voiceScrollEnabled && speechSupported
     ? "Teleprompter active — speak to advance (or Space/↓)."
-    : "Teleprompter active — speech unsupported (use Space/↓).";
+    : "Teleprompter active — use Space/↓ to advance.";
 }
 
 function exitTeleprompterMode(silent){
   teleprompterActive = false;
-  if(teleprompterEl) teleprompterEl.classList.remove("active");
+  if(teleprompterEl){
+    teleprompterEl.classList.remove("active");
+    teleprompterEl.setAttribute("aria-hidden", "true");
+  }
 
   stopSpeechRecognition();
 
   // Restore overlay visuals if calibrated
   overlaysEnabled = !!hasCalibrated;
 
-  if(!silent){
-    statusEl.textContent = "Exited teleprompter.";
-  }
+  // Swap top-bar buttons back
+  if(tpBtn) tpBtn.classList.remove("hidden");
+  if(exitPrompterBtnEl) exitPrompterBtnEl.classList.add("hidden");
+  if(voiceScrollBtnEl)  voiceScrollBtnEl.classList.add("hidden");
+
+  if(!silent) statusEl.textContent = "Exited teleprompter.";
 }
 
 /* ---------- Speech Recognition ---------- */
@@ -2110,7 +1922,7 @@ function stopSpeechRecognition(){
 
 /* Match spoken words against current line, advance when complete */
 function processSpokenText(spoken, isFinal){
-  if(!teleprompterActive) return;
+  if(!teleprompterActive || !voiceScrollEnabled) return;
   if(!tpMatchTokens.length) return;
 
   const expected = tpMatchTokens[currentLineIndex] || [];
