@@ -382,19 +382,24 @@ async function setupCamera(){
   }
 
   video.srcObject = stream;
+  video.muted     = true;
+  video.playsInline = true;
 
-  // Wait for enough video data to begin reading frames.
-  // Use addEventListener({ once }) + both canplay/loadeddata so we don't
-  // miss the event if readyState already advanced past 1 (loadedmetadata).
-  await new Promise((resolve, reject) => {
-    if(video.readyState >= 2){ resolve(); return; }
-    video.addEventListener("canplay",    resolve, { once: true });
-    video.addEventListener("loadeddata", resolve, { once: true });
-    video.play().catch(reject);
-  });
+  // play() resolves once the browser is actually playing; for a live
+  // MediaStream it also triggers the canplay/loadeddata chain.
+  statusEl.textContent = "Starting video stream…";
+  console.log("[boot] video.play()…");
+  await video.play();
+  console.log("[boot] video playing. readyState=", video.readyState);
 
-  if(!video.paused) { /* already playing from the event handler */ }
-  else { await video.play(); }
+  // If the browser resolved play() before the first frame was decoded
+  // (readyState 2), wait for it — detectForVideo needs at least one frame.
+  if(video.readyState < 2){
+    statusEl.textContent = "Waiting for first video frame…";
+    await new Promise(resolve =>
+      video.addEventListener("canplay", resolve, { once: true })
+    );
+  }
 
   resizeCanvasToCSS();
 }
@@ -2032,12 +2037,14 @@ function processSpokenText(transcript, isFinal){
   window.__appStarted = true;
   (async ()=>{
     try{
+      statusEl.textContent = "Initialising UI…";
       setupTeleprompterUI();
 
       // Load the mediapipe bundle via a classic <script> tag.
       // dynamic import() cannot be used because vision_bundle.js contains
       // Emscripten-generated WASM glue code that is invalid in strict ES module mode.
       statusEl.textContent = "Loading face detection model…";
+      console.log("[boot] fetching mediapipe bundle…");
       await new Promise((resolve, reject) => {
         const s = document.createElement("script");
         s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
@@ -2048,6 +2055,7 @@ function processSpokenText(transcript, isFinal){
         ));
         document.head.appendChild(s);
       });
+      console.log("[boot] mediapipe bundle loaded. window.FaceLandmarker=", typeof window.FaceLandmarker, "window.FilesetResolver=", typeof window.FilesetResolver);
       FaceLandmarker  = window.FaceLandmarker;
       FilesetResolver = window.FilesetResolver;
       if(!FaceLandmarker || !FilesetResolver){
@@ -2057,7 +2065,10 @@ function processSpokenText(transcript, isFinal){
         );
       }
 
+      statusEl.textContent = "Starting camera…";
+      console.log("[boot] calling setupCamera…");
       await setupCamera();
+      console.log("[boot] camera ready. calling setupFaceLandmarker…");
       await setupFaceLandmarker();
       running=true;
       statusEl.textContent="Ready — press Start Calibration";
