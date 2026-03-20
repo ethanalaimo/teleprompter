@@ -2009,57 +2009,61 @@ function processSpokenText(spoken, isFinal){
     try{
       setupTeleprompterUI();
 
-      // Load mediapipe via a classic <script> tag. vision_bundle.js is a
-      // CommonJS module — it assigns to `module.exports`. Browsers don't
-      // define `module`, so without a shim the assignment throws at runtime
-      // and no globals are created. Provide a temporary shim so the CJS
-      // export lands somewhere we can read, then clean it up.
+      // Load MediaPipe Tasks Vision. Try two strategies in order:
+      //   1. Dynamic import() of the CDN URL — same as the original static
+      //      import, but caught so failures don't silently kill the page.
+      //   2. fetch() + new Function() — evaluates the raw JS in sloppy mode
+      //      with CJS shims (module/exports), bypassing strict-mode octal
+      //      literal issues AND the missing `module` global problem.
+      const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+      const MP_BUNDLE_URL = MP_URL + "/vision_bundle.js";
+
       statusEl.textContent = "Loading face detection model…";
 
-      const _cjsShim = { exports: {} };
-      window.module  = _cjsShim;           // CJS: module.exports = {...}
-      window.exports = _cjsShim.exports;   // CJS: exports.Foo = ...
-
+      // --- Strategy 1: dynamic import ---
       try {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
-          s.onload  = resolve;
-          s.onerror = () => reject(new Error(
-            "Failed to fetch face detection model from CDN — check your network and try refreshing."
-          ));
-          document.head.appendChild(s);
+        const mp = await import(/* @vite-ignore */ MP_URL);
+        FaceLandmarker  = mp.FaceLandmarker  ?? mp.default?.FaceLandmarker;
+        FilesetResolver = mp.FilesetResolver ?? mp.default?.FilesetResolver;
+      } catch(_importErr){
+        // Strategy 1 failed (strict-mode octal errors, CORS, etc.) — continue
+      }
+
+      // --- Strategy 2: fetch + new Function (sloppy mode, CJS shims) ---
+      if(!FaceLandmarker || !FilesetResolver){
+        statusEl.textContent = "Loading face detection model (fallback)…";
+        const _text = await fetch(MP_BUNDLE_URL, { mode: "cors" }).then(r => {
+          if(!r.ok) throw new Error(`CDN returned HTTP ${r.status}`);
+          return r.text();
         });
-      } finally {
-        // Always remove the shim so it doesn't pollute later code
-        delete window.module;
-        delete window.exports;
-      }
-
-      // The CJS bundle assigns to module.exports; try that first, then fall
-      // back to any window globals the bundle may have also set.
-      const _mpExports = _cjsShim.exports;
-      FaceLandmarker  = _mpExports.FaceLandmarker  || window.FaceLandmarker;
-      FilesetResolver = _mpExports.FilesetResolver || window.FilesetResolver;
-
-      if(!FaceLandmarker || !FilesetResolver){
-        // Last resort: scan every key of the exports object for the classes
-        for(const key of Object.keys(_mpExports)){
-          const v = _mpExports[key];
-          if(v && typeof v === "object"){
-            if(!FaceLandmarker  && v.FaceLandmarker)  FaceLandmarker  = v.FaceLandmarker;
-            if(!FilesetResolver && v.FilesetResolver) FilesetResolver = v.FilesetResolver;
-          }
-          if(FaceLandmarker && FilesetResolver) break;
-        }
-      }
-
-      if(!FaceLandmarker || !FilesetResolver){
-        const exportKeys = Object.keys(_mpExports).slice(0, 20).join(", ") || "none";
-        throw new Error(
-          `Mediapipe loaded but classes not found. ` +
-          `module.exports keys: [${exportKeys}]. Open DevTools console for details.`
+        const _mod = { exports: {} };
+        // new Function body is sloppy mode — safe for octal literals
+        // Parameters shadow any global module/exports/require
+        // eslint-disable-next-line no-new-func
+        new Function("module", "exports", "require", _text)(
+          _mod, _mod.exports, () => {}
         );
+        FaceLandmarker  = _mod.exports.FaceLandmarker  || window.FaceLandmarker;
+        FilesetResolver = _mod.exports.FilesetResolver || window.FilesetResolver;
+        if(!FaceLandmarker || !FilesetResolver){
+          // Scan nested export objects (some bundles use a namespace)
+          for(const k of Object.keys(_mod.exports)){
+            const v = _mod.exports[k];
+            if(v && typeof v === "object"){
+              FaceLandmarker  = FaceLandmarker  || v.FaceLandmarker;
+              FilesetResolver = FilesetResolver || v.FilesetResolver;
+            }
+          }
+        }
+        if(!FaceLandmarker || !FilesetResolver){
+          // Show first 120 chars of the bundle to help diagnose format issues
+          const preview = _text.slice(0, 120).replace(/\n/g, " ");
+          throw new Error(
+            `Mediapipe bundle format unrecognized. ` +
+            `module.exports keys: [${Object.keys(_mod.exports).slice(0,15).join(", ")||"none"}]. ` +
+            `Bundle starts: ${preview}`
+          );
+        }
       }
 
       await setupCamera();
