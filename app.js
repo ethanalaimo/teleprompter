@@ -2009,50 +2009,56 @@ function processSpokenText(spoken, isFinal){
     try{
       setupTeleprompterUI();
 
-      // Load mediapipe via a classic <script> tag (not import()) because
-      // vision_bundle.js contains Emscripten WASM glue that fails strict-mode parsing.
-      // No crossOrigin attribute — classic scripts don't need CORS and adding it
-      // causes Chrome to block the load if the CDN doesn't echo CORS headers.
+      // Load mediapipe via a classic <script> tag. vision_bundle.js is a
+      // CommonJS module — it assigns to `module.exports`. Browsers don't
+      // define `module`, so without a shim the assignment throws at runtime
+      // and no globals are created. Provide a temporary shim so the CJS
+      // export lands somewhere we can read, then clean it up.
       statusEl.textContent = "Loading face detection model…";
 
-      // Snapshot window keys so we can find whatever global the UMD bundle creates.
-      const _keysBefore = new Set(Object.getOwnPropertyNames(window));
+      const _cjsShim = { exports: {} };
+      window.module  = _cjsShim;           // CJS: module.exports = {...}
+      window.exports = _cjsShim.exports;   // CJS: exports.Foo = ...
 
-      await new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
-        // No crossOrigin — classic scripts don't need CORS headers
-        s.onload = resolve;
-        s.onerror = () => reject(new Error(
-          "Failed to load face detection model from CDN — check your network and try refreshing."
-        ));
-        document.head.appendChild(s);
-      });
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
+          s.onload  = resolve;
+          s.onerror = () => reject(new Error(
+            "Failed to fetch face detection model from CDN — check your network and try refreshing."
+          ));
+          document.head.appendChild(s);
+        });
+      } finally {
+        // Always remove the shim so it doesn't pollute later code
+        delete window.module;
+        delete window.exports;
+      }
 
-      // The UMD bundle may expose globals directly (window.FaceLandmarker) or
-      // nested inside a namespace object (window.vision.FaceLandmarker, etc.).
-      // Search for them automatically.
-      FaceLandmarker  = window.FaceLandmarker;
-      FilesetResolver = window.FilesetResolver;
+      // The CJS bundle assigns to module.exports; try that first, then fall
+      // back to any window globals the bundle may have also set.
+      const _mpExports = _cjsShim.exports;
+      FaceLandmarker  = _mpExports.FaceLandmarker  || window.FaceLandmarker;
+      FilesetResolver = _mpExports.FilesetResolver || window.FilesetResolver;
 
       if(!FaceLandmarker || !FilesetResolver){
-        // Scan any new globals the script added
-        const newKeys = Object.getOwnPropertyNames(window).filter(k => !_keysBefore.has(k));
-        for(const key of newKeys){
-          const g = window[key];
-          if(g && typeof g === "object"){
-            if(g.FaceLandmarker) FaceLandmarker  = g.FaceLandmarker;
-            if(g.FilesetResolver) FilesetResolver = g.FilesetResolver;
+        // Last resort: scan every key of the exports object for the classes
+        for(const key of Object.keys(_mpExports)){
+          const v = _mpExports[key];
+          if(v && typeof v === "object"){
+            if(!FaceLandmarker  && v.FaceLandmarker)  FaceLandmarker  = v.FaceLandmarker;
+            if(!FilesetResolver && v.FilesetResolver) FilesetResolver = v.FilesetResolver;
           }
           if(FaceLandmarker && FilesetResolver) break;
         }
       }
 
       if(!FaceLandmarker || !FilesetResolver){
-        const newKeys = Object.getOwnPropertyNames(window).filter(k => !_keysBefore.has(k));
+        const exportKeys = Object.keys(_mpExports).slice(0, 20).join(", ") || "none";
         throw new Error(
-          `Mediapipe bundle loaded but FaceLandmarker/FilesetResolver not found. ` +
-          `New globals: [${newKeys.join(", ") || "none"}]. Open DevTools console for details.`
+          `Mediapipe loaded but classes not found. ` +
+          `module.exports keys: [${exportKeys}]. Open DevTools console for details.`
         );
       }
 
