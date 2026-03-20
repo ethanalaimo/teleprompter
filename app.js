@@ -2,7 +2,9 @@
 // + Teleprompter (notes input modal + wheel UI + speech-driven autoadvance)
 // NOTE: Teleprompter hides overlay visuals but keeps tracking running for LOOK UP cue.
 
-import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+// FaceLandmarker and FilesetResolver are loaded via classic <script> tag in start()
+// because vision_bundle.js contains Emscripten WASM glue that is invalid in strict ES module mode.
+let FaceLandmarker, FilesetResolver;
 
 const overlay  = document.getElementById("overlay");
 const octx     = overlay.getContext("2d");
@@ -353,25 +355,55 @@ function applyAffine2D(A,p){
 
 /* ---------- Camera / Model ---------- */
 async function setupCamera(){
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{facingMode:"user", width:{ideal:1280}, height:{ideal:720}},
-    audio:false
-  });
+  if(!navigator.mediaDevices?.getUserMedia){
+    throw new Error("Camera API unavailable — open the page over HTTPS and try again.");
+  }
+  statusEl.textContent = "Requesting camera access…";
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:"user", width:{ ideal:1280 }, height:{ ideal:720 } },
+      audio: false
+    });
+  }catch(err){
+    const friendly = {
+      NotAllowedError:       "Camera permission denied — allow access in your browser settings and refresh.",
+      PermissionDeniedError: "Camera permission denied — allow access in your browser settings and refresh.",
+      NotFoundError:         "No camera found — connect a camera and refresh.",
+      DevicesNotFoundError:  "No camera found — connect a camera and refresh.",
+      NotReadableError:      "Camera is in use by another app — close it and refresh.",
+      TrackStartError:       "Camera is in use by another app — close it and refresh.",
+    }[err.name];
+    throw new Error(friendly || `Camera error (${err.name}): ${err.message}`);
+  }
   video.srcObject = stream;
-  await video.play();
-  await new Promise(r=> video.readyState>=2 ? r() : (video.onloadedmetadata=r));
+  // Wait for enough video data. Use both canplay/loadeddata so we don't miss
+  // the event if readyState already advanced past 1 (loadedmetadata).
+  await new Promise((resolve, reject) => {
+    if(video.readyState >= 2){ resolve(); return; }
+    video.addEventListener("canplay",    resolve, { once: true });
+    video.addEventListener("loadeddata", resolve, { once: true });
+    video.play().catch(reject);
+  });
+  if(video.paused) await video.play();
   resizeCanvasToCSS();
 }
 async function setupFaceLandmarker(){
-  statusEl.textContent="Loading model…";
-  const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver,{
-    baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
-    numFaces:1, runningMode:"VIDEO",
-    outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
-    minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
-  });
-  statusEl.textContent="Ready — press Start Calibration";
+  statusEl.textContent = "Loading face model…";
+  try{
+    const filesetResolver = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    );
+    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
+      numFaces:1, runningMode:"VIDEO",
+      outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
+      minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
+    });
+  }catch(err){
+    throw new Error(`Failed to load face model — check your internet connection. (${err.message})`);
+  }
+  statusEl.textContent = "Ready — press Start Calibration";
 }
 
 /* ---------- Drawing sizes ---------- */
@@ -1972,9 +2004,29 @@ function processSpokenText(spoken, isFinal){
 
 /* ---------- Boot ---------- */
 (function start(){
+  window.__appStarted = true;
   (async ()=>{
     try{
       setupTeleprompterUI();
+
+      // Load mediapipe via a classic <script> tag (not import()) because
+      // vision_bundle.js contains Emscripten WASM glue that fails strict-mode parsing.
+      statusEl.textContent = "Loading face detection model…";
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
+        s.crossOrigin = "anonymous";
+        s.onload = resolve;
+        s.onerror = () => reject(new Error(
+          "Failed to load face detection model from CDN — check your network connection and try refreshing."
+        ));
+        document.head.appendChild(s);
+      });
+      FaceLandmarker  = window.FaceLandmarker;
+      FilesetResolver = window.FilesetResolver;
+      if(!FaceLandmarker || !FilesetResolver){
+        throw new Error("Mediapipe bundle loaded but globals not found — open DevTools console for details.");
+      }
 
       await setupCamera();
       await setupFaceLandmarker();
@@ -2001,8 +2053,9 @@ function processSpokenText(spoken, isFinal){
       })();
     }catch(e){
       console.error(e);
-      statusEl.textContent="Permission or init error";
-      alert("Could not access the camera or load the model. Check permissions and try again.");
+      const msg = e.message || "Initialization failed — check the console for details.";
+      statusEl.textContent = msg;
+      alert(msg);
     }
   })();
 })();
