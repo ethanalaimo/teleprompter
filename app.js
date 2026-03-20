@@ -2011,21 +2011,49 @@ function processSpokenText(spoken, isFinal){
 
       // Load mediapipe via a classic <script> tag (not import()) because
       // vision_bundle.js contains Emscripten WASM glue that fails strict-mode parsing.
+      // No crossOrigin attribute — classic scripts don't need CORS and adding it
+      // causes Chrome to block the load if the CDN doesn't echo CORS headers.
       statusEl.textContent = "Loading face detection model…";
+
+      // Snapshot window keys so we can find whatever global the UMD bundle creates.
+      const _keysBefore = new Set(Object.getOwnPropertyNames(window));
+
       await new Promise((resolve, reject) => {
         const s = document.createElement("script");
         s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
-        s.crossOrigin = "anonymous";
+        // No crossOrigin — classic scripts don't need CORS headers
         s.onload = resolve;
         s.onerror = () => reject(new Error(
-          "Failed to load face detection model from CDN — check your network connection and try refreshing."
+          "Failed to load face detection model from CDN — check your network and try refreshing."
         ));
         document.head.appendChild(s);
       });
+
+      // The UMD bundle may expose globals directly (window.FaceLandmarker) or
+      // nested inside a namespace object (window.vision.FaceLandmarker, etc.).
+      // Search for them automatically.
       FaceLandmarker  = window.FaceLandmarker;
       FilesetResolver = window.FilesetResolver;
+
       if(!FaceLandmarker || !FilesetResolver){
-        throw new Error("Mediapipe bundle loaded but globals not found — open DevTools console for details.");
+        // Scan any new globals the script added
+        const newKeys = Object.getOwnPropertyNames(window).filter(k => !_keysBefore.has(k));
+        for(const key of newKeys){
+          const g = window[key];
+          if(g && typeof g === "object"){
+            if(g.FaceLandmarker) FaceLandmarker  = g.FaceLandmarker;
+            if(g.FilesetResolver) FilesetResolver = g.FilesetResolver;
+          }
+          if(FaceLandmarker && FilesetResolver) break;
+        }
+      }
+
+      if(!FaceLandmarker || !FilesetResolver){
+        const newKeys = Object.getOwnPropertyNames(window).filter(k => !_keysBefore.has(k));
+        throw new Error(
+          `Mediapipe bundle loaded but FaceLandmarker/FilesetResolver not found. ` +
+          `New globals: [${newKeys.join(", ") || "none"}]. Open DevTools console for details.`
+        );
       }
 
       await setupCamera();
