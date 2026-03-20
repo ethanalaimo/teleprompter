@@ -2,7 +2,9 @@
 // + Teleprompter (notes input modal + wheel UI + speech-driven autoadvance)
 // NOTE: Teleprompter hides overlay visuals but keeps tracking running for LOOK UP cue.
 
-import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+// FaceLandmarker and FilesetResolver are loaded via classic <script> tag in start()
+// because vision_bundle.js contains Emscripten WASM glue that is invalid in strict ES module mode.
+let FaceLandmarker, FilesetResolver;
 
 const overlay  = document.getElementById("overlay");
 const octx     = overlay.getContext("2d");
@@ -84,7 +86,6 @@ const STOPWORDS = new Set([
 let recognition = null;
 let recognitionRunning = false;
 let speechSupported = false;
-let recognitionTranscript = ""; // full accumulated transcript for the current line
 
 // Landmark indices (MediaPipe)
 const RIGHT_EYE=[33,7,163,144,145,153,154,155,133,246,161,160,159,158,157,173];
@@ -354,25 +355,55 @@ function applyAffine2D(A,p){
 
 /* ---------- Camera / Model ---------- */
 async function setupCamera(){
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{facingMode:"user", width:{ideal:1280}, height:{ideal:720}},
-    audio:false
-  });
+  if(!navigator.mediaDevices?.getUserMedia){
+    throw new Error("Camera API unavailable — open the page over HTTPS and try again.");
+  }
+  statusEl.textContent = "Requesting camera access…";
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:"user", width:{ ideal:1280 }, height:{ ideal:720 } },
+      audio: false
+    });
+  }catch(err){
+    const friendly = {
+      NotAllowedError:       "Camera permission denied — allow access in your browser settings and refresh.",
+      PermissionDeniedError: "Camera permission denied — allow access in your browser settings and refresh.",
+      NotFoundError:         "No camera found — connect a camera and refresh.",
+      DevicesNotFoundError:  "No camera found — connect a camera and refresh.",
+      NotReadableError:      "Camera is in use by another app — close it and refresh.",
+      TrackStartError:       "Camera is in use by another app — close it and refresh.",
+    }[err.name];
+    throw new Error(friendly || `Camera error (${err.name}): ${err.message}`);
+  }
   video.srcObject = stream;
-  await video.play();
-  await new Promise(r=> video.readyState>=2 ? r() : (video.onloadedmetadata=r));
+  // Wait for enough video data. Use both canplay/loadeddata so we don't miss
+  // the event if readyState already advanced past 1 (loadedmetadata).
+  await new Promise((resolve, reject) => {
+    if(video.readyState >= 2){ resolve(); return; }
+    video.addEventListener("canplay",    resolve, { once: true });
+    video.addEventListener("loadeddata", resolve, { once: true });
+    video.play().catch(reject);
+  });
+  if(video.paused) await video.play();
   resizeCanvasToCSS();
 }
 async function setupFaceLandmarker(){
-  statusEl.textContent="Loading model…";
-  const filesetResolver = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm");
-  faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver,{
-    baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
-    numFaces:1, runningMode:"VIDEO",
-    outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
-    minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
-  });
-  statusEl.textContent="Ready — press Start Calibration";
+  statusEl.textContent = "Loading face model…";
+  try{
+    const filesetResolver = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    );
+    faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task" },
+      numFaces:1, runningMode:"VIDEO",
+      outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
+      minFaceDetectionConfidence:0.6, minTrackingConfidence:0.6, minFacePresenceConfidence:0.6,
+    });
+  }catch(err){
+    throw new Error(`Failed to load face model — check your internet connection. (${err.message})`);
+  }
+  statusEl.textContent = "Ready — press Start Calibration";
 }
 
 /* ---------- Drawing sizes ---------- */
@@ -1775,14 +1806,6 @@ function animateToLine(targetIdx, dir){
 function advanceLine(){
   const nextIdx = findNextSpeakableIndex(currentLineIndex);
   if(nextIdx < 0) return;
-
-  // Clear accumulated transcript immediately so words from the line we just
-  // finished don't carry over and accidentally match the next line.
-  recognitionTranscript = "";
-  if(voiceScrollEnabled && recognitionRunning){
-    try{ recognition.stop(); }catch{} // onend handler will restart it
-  }
-
   animateToLine(nextIdx, +1);
 }
 
@@ -1852,55 +1875,61 @@ function exitTeleprompterMode(silent){
 /* ---------- Speech Recognition ---------- */
 function initSpeechRecognition(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SR){ speechSupported = false; return; }
+  if(!SR){
+    speechSupported = false;
+    return;
+  }
   speechSupported = true;
 
   recognition = new SR();
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.lang = navigator.language || “en-US”;
-  recognition.maxAlternatives = 1;
+  recognition.lang = "en-US";
 
   recognition.onstart = ()=>{
-    recognitionTranscript = “”;
     recognitionRunning = true;
   };
 
   recognition.onerror = (e)=>{
     recognitionRunning = false;
-    // “no-speech” and “aborted” are normal events, not real errors
-    if(e.error === “no-speech” || e.error === “aborted”) return;
     if(teleprompterActive){
-      statusEl.textContent = `Mic error: ${e?.error ?? “unknown”}`;
+      statusEl.textContent = `Mic error: ${e?.error || "unknown"}`;
     }
   };
 
   recognition.onend = ()=>{
     recognitionRunning = false;
-    if(teleprompterActive && voiceScrollEnabled){
-      // Clear transcript so auto-restart begins with a clean slate
-      recognitionTranscript = “”;
-      try{ recognition.start(); }catch{}
+    // Keep it running while teleprompter is active
+    if(teleprompterActive){
+      try{
+        recognition.start();
+      }catch{}
     }
   };
 
   recognition.onresult = (event)=>{
-    // Rebuild the FULL session transcript: all finals + current interim.
-    // This gives processSpokenText the complete context rather than just
-    // the latest chunk, so partial matches accumulate correctly.
-    let finals = “”;
-    let interim = “”;
-    for(let i = 0; i < event.results.length; i++){
-      const t = (event.results[i]?.[0]?.transcript || “”).trim();
-      if(!t) continue;
-      if(event.results[i].isFinal) finals += “ “ + t;
-      else interim = t;
-    }
-    recognitionTranscript = (finals.trim() + (interim ? “ “ + interim : “”)).trim();
-    if(!recognitionTranscript) return;
+    let finalText = "";
+    let interimText = "";
 
-    // isFinal = no pending interim result (all results confirmed)
-    processSpokenText(recognitionTranscript, !interim);
+    for(let i=event.resultIndex; i<event.results.length; i++){
+      const res = event.results[i];
+      const t = (res?.[0]?.transcript || "").trim();
+      if(!t) continue;
+
+      if(res.isFinal) finalText += " " + t;
+      else interimText = t; // latest interim
+    }
+
+    const spoken = (finalText.trim() || interimText.trim());
+    if(!spoken) return;
+
+    // Debug: confirm SpeechRecognition is actually producing text
+    if(teleprompterActive && statusEl){
+      const short = spoken.length > 60 ? spoken.slice(0,60) + "…" : spoken;
+      statusEl.textContent = `Heard: “${short}”`;
+    }
+
+    processSpokenText(spoken, !!finalText.trim());
   };
 }
 
@@ -1923,57 +1952,119 @@ function stopSpeechRecognition(){
   recognitionRunning = false;
 }
 
-/* Match the full accumulated recognition transcript against the current line.
-   Because we restart recognition on each advance, this transcript is fresh
-   for every line — no carry-over from previous sentences. */
-function processSpokenText(transcript, isFinal){
+/* Match spoken words against current line, advance when complete */
+function processSpokenText(spoken, isFinal){
   if(!teleprompterActive || !voiceScrollEnabled) return;
   if(!tpMatchTokens.length) return;
 
   const expected = tpMatchTokens[currentLineIndex] || [];
-  // Blank / separator lines — skip immediately
-  if(!expected.length){ advanceLine(); return; }
+  if(!expected.length) return;
 
-  const spokenTokens = tokenize(transcript);
+  const spokenTokens = tokenize(spoken);
   if(!spokenTokens.length) return;
 
-  // Greedy forward scan: walk through spoken tokens and advance `pos` through
-  // expected tokens whenever there’s a match (exact or fuzzy prefix).
-  // A 1-2 token lookahead lets us stay on track when recognition drops a word.
-  let pos = 0;
+  // Match spoken tokens against expected tokens IN ORDER
+  let pos = currentTokenPos;
+
   for(const st of spokenTokens){
     if(pos >= expected.length) break;
 
     if(tokenMatch(st, expected[pos])){
       pos++;
-    } else if(pos + 1 < expected.length && tokenMatch(st, expected[pos + 1])){
-      pos += 2; // skip one expected word (recognition dropped it)
-    } else if(pos + 2 < expected.length && tokenMatch(st, expected[pos + 2])){
-      pos += 3; // skip two expected words
+      continue;
     }
-    // Otherwise this spoken word is noise — keep scanning without advancing pos
+
+    // small lookahead helps when recognition drops a word
+    if((pos + 1) < expected.length && tokenMatch(st, expected[pos + 1])){
+      pos += 2;
+      continue;
+    }
+    if((pos + 2) < expected.length && tokenMatch(st, expected[pos + 2])){
+      pos += 3;
+      continue;
+    }
   }
 
-  const ratio = pos / expected.length;
+  if(pos > currentTokenPos) currentTokenPos = pos;
 
-  if(pos >= expected.length){
-    // Every expected token matched — advance now
+  // ✅ Only advance when we’ve matched ALL expected tokens
+  if(currentTokenPos >= expected.length){
     advanceLine();
-  } else if(isFinal && ratio >= 0.75 && expected.length >= 4){
-    // ≥75% of tokens confirmed on a final result → close enough, advance
-    advanceLine();
-  } else if(!isFinal && ratio >= 0.85 && expected.length >= 6){
-    // ≥85% matched on an interim result for a long line → speaker is clearly
-    // through it, don’t make them wait for recognition to finalize
-    advanceLine();
+    return;
+  }
+
+  // Optional: if final result is very close on a long line, let it pass
+  if(isFinal && expected.length >= 10){
+    const ratio = currentTokenPos / expected.length;
+    if(ratio >= 0.92){
+      advanceLine();
+    }
   }
 }
 
 /* ---------- Boot ---------- */
 (function start(){
+  window.__appStarted = true;
   (async ()=>{
     try{
       setupTeleprompterUI();
+
+      // Load MediaPipe Tasks Vision. Try two strategies in order:
+      //   1. Dynamic import() of the CDN URL — same as the original static
+      //      import, but caught so failures don't silently kill the page.
+      //   2. fetch() + new Function() — evaluates the raw JS in sloppy mode
+      //      with CJS shims (module/exports), bypassing strict-mode octal
+      //      literal issues AND the missing `module` global problem.
+      const MP_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0";
+      const MP_BUNDLE_URL = MP_URL + "/vision_bundle.js";
+
+      statusEl.textContent = "Loading face detection model…";
+
+      // --- Strategy 1: dynamic import ---
+      try {
+        const mp = await import(/* @vite-ignore */ MP_URL);
+        FaceLandmarker  = mp.FaceLandmarker  ?? mp.default?.FaceLandmarker;
+        FilesetResolver = mp.FilesetResolver ?? mp.default?.FilesetResolver;
+      } catch(_importErr){
+        // Strategy 1 failed (strict-mode octal errors, CORS, etc.) — continue
+      }
+
+      // --- Strategy 2: fetch + new Function (sloppy mode, CJS shims) ---
+      if(!FaceLandmarker || !FilesetResolver){
+        statusEl.textContent = "Loading face detection model (fallback)…";
+        const _text = await fetch(MP_BUNDLE_URL, { mode: "cors" }).then(r => {
+          if(!r.ok) throw new Error(`CDN returned HTTP ${r.status}`);
+          return r.text();
+        });
+        const _mod = { exports: {} };
+        // new Function body is sloppy mode — safe for octal literals
+        // Parameters shadow any global module/exports/require
+        // eslint-disable-next-line no-new-func
+        new Function("module", "exports", "require", _text)(
+          _mod, _mod.exports, () => {}
+        );
+        FaceLandmarker  = _mod.exports.FaceLandmarker  || window.FaceLandmarker;
+        FilesetResolver = _mod.exports.FilesetResolver || window.FilesetResolver;
+        if(!FaceLandmarker || !FilesetResolver){
+          // Scan nested export objects (some bundles use a namespace)
+          for(const k of Object.keys(_mod.exports)){
+            const v = _mod.exports[k];
+            if(v && typeof v === "object"){
+              FaceLandmarker  = FaceLandmarker  || v.FaceLandmarker;
+              FilesetResolver = FilesetResolver || v.FilesetResolver;
+            }
+          }
+        }
+        if(!FaceLandmarker || !FilesetResolver){
+          // Show first 120 chars of the bundle to help diagnose format issues
+          const preview = _text.slice(0, 120).replace(/\n/g, " ");
+          throw new Error(
+            `Mediapipe bundle format unrecognized. ` +
+            `module.exports keys: [${Object.keys(_mod.exports).slice(0,15).join(", ")||"none"}]. ` +
+            `Bundle starts: ${preview}`
+          );
+        }
+      }
 
       await setupCamera();
       await setupFaceLandmarker();
@@ -2000,8 +2091,9 @@ function processSpokenText(transcript, isFinal){
       })();
     }catch(e){
       console.error(e);
-      statusEl.textContent="Permission or init error";
-      alert("Could not access the camera or load the model. Check permissions and try again.");
+      const msg = e.message || "Initialization failed — check the console for details.";
+      statusEl.textContent = msg;
+      alert(msg);
     }
   })();
 })();

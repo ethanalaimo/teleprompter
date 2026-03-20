@@ -106,6 +106,28 @@
     </div>
   </div>
 
+  <!-- Watchdog: if app.js module fails to load, no JS runs and the page
+       stays frozen on "Loading…". This classic script always runs and can detect that. -->
+  <script>
+    window.addEventListener('error', function(e) {
+      var s = document.getElementById('status');
+      if(s && s.textContent === 'Loading\u2026')
+        s.textContent = 'Script error: ' + (e.message || 'unknown') + ' — open DevTools (F12) for details';
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      var s = document.getElementById('status');
+      if(s && s.textContent === 'Loading\u2026'){
+        var msg = (e.reason && (e.reason.message || String(e.reason))) || 'unknown';
+        s.textContent = 'Load error: ' + msg + ' — open DevTools (F12) for details';
+      }
+    });
+    setTimeout(function() {
+      if(!window.__appStarted){
+        var s = document.getElementById('status');
+        if(s) s.textContent = 'Failed to load app.js — check your network and open DevTools (F12) for details';
+      }
+    }, 10000);
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
