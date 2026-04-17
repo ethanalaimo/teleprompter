@@ -221,10 +221,12 @@ function updateLookUpCue(downNow){
 
   const t = performance.now();
 
+  const triggerMs = teleprompterActive ? 3000 : DOWN_TRIGGER_MS;
+
   if(downNow){
     upSinceMs = null;
     if(downStartMs === null) downStartMs = t;
-    if(!cueActive && (t - downStartMs) >= DOWN_TRIGGER_MS){
+    if(!cueActive && (t - downStartMs) >= triggerMs){
       setLookUpCueActive(true);
     }
   } else {
@@ -721,6 +723,13 @@ function updateRegionStats(headPose, gazePoint, chin, forehead){
     isDown      = gazeDown;
   } else {
     return false;
+  }
+
+  // In teleprompter mode the user is reading on-screen text near screen
+  // center. Suppress the sensitive head-based detection entirely and only
+  // count as "down" when gaze is clearly below screen (>80% height).
+  if(teleprompterActive){
+    isDown = hasGaze && (gazePoint.y / h) > 0.80;
   }
 
   if(horizRegion) regionTimes[horizRegion] += dt;
